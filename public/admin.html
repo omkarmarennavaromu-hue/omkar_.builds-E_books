@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0c0d">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Review moderation — omkar_.builds-E-books</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/admin.css">
+</head>
+<body>
+<header><a class="brand" href="/">omkar_.builds<span>—E-books</span></a><a class="back" href="/">← BACK TO THE SITE</a></header>
+<main class="container">
+  <span class="eyebrow">PRIVATE / EDITORIAL</span>
+  <h1>The reading<br><em>room.</em></h1>
+  <p class="intro">A private place to approve or decline real reader reviews. Nothing appears publicly until you approve it. Ratings and reactions are public immediately and are not edited here.</p>
+  <section id="loginView" class="card" aria-label="Admin login">
+    <h2>Moderator access.</h2><p>Enter the private passphrase saved on the server. It is never stored in this page.</p>
+    <form id="loginForm"><label for="passphrase">PASSPHRASE</label><input id="passphrase" type="password" required autocomplete="off" spellcheck="false"><button class="primary" type="submit">Open moderation →</button></form>
+    <p id="loginStatus" class="status" role="status" aria-live="polite"></p>
+  </section>
+  <section id="dashboard" class="hidden" aria-label="Review moderation dashboard">
+    <div class="dash-head"><h2>Reader submissions</h2><button type="button" id="logout">Sign out ↗</button></div>
+    <div class="tabs" role="tablist" aria-label="Review status"><button type="button" role="tab" data-status="pending" aria-selected="true">AWAITING APPROVAL <span id="pendingCount">0</span></button><button type="button" role="tab" data-status="approved" aria-selected="false">PUBLISHED <span id="approvedCount">0</span></button><button type="button" role="tab" data-status="rejected" aria-selected="false">DECLINED <span id="rejectedCount">0</span></button></div>
+    <p id="dashboardStatus" class="status" role="status" aria-live="polite"></p>
+    <p class="queue-note">Showing up to 100 most recent submissions per category. Only approved reviews appear on the public site.</p>
+    <div id="reviewQueue"></div>
+    <p class="footnote">One written review per browser at a time. Guest identities are cookie-based, not verified. Never share the admin passphrase or server data files.</p>
+  </section>
+</main>
+<script>
+(() => {
+  'use strict';
+  const $ = s => document.querySelector(s);
+  const $$ = (s, root = document) => [...root.querySelectorAll(s)];
+  let selected = 'pending';
+  let lists = {pending:[], approved:[], rejected:[]};
+  const login = $('#loginView'), dashboard = $('#dashboard');
+  function showDashboard(authenticated) {
+    login.classList.toggle('hidden', authenticated);
+    dashboard.classList.toggle('hidden', !authenticated);
+  }
+  async function api(path, data) {
+    const options = {credentials:'same-origin', cache:'no-store'};
+    if (data !== undefined) { options.method = 'POST'; options.headers = {'Content-Type':'application/json'}; options.body = JSON.stringify(data); }
+    const response = await fetch(path, options);
+    let body;
+    try { body = await response.json(); } catch { throw Error('The server returned an unreadable response.'); }
+    if (!response.ok) throw Error(body.error || 'Request failed.');
+    return body;
+  }
+  function render() {
+    ['pending', 'approved', 'rejected'].forEach(status => {
+      $(`#${status}Count`).textContent = lists[status].length;
+      $(`[data-status="${status}"]`).setAttribute('aria-selected', String(selected === status));
+    });
+    const queue = $('#reviewQueue');
+    queue.replaceChildren();
+    if (!lists[selected].length) {
+      const blank = document.createElement('div');
+      blank.className = 'empty';
+      const heading = document.createElement('strong');
+      heading.textContent = selected === 'pending' ? 'All caught up.' : `No ${selected} reviews.`;
+      const detail = document.createElement('p');
+      detail.textContent = selected === 'pending' ? 'There are no reader reviews waiting for a decision.' : 'There are no real reader reviews in this category yet.';
+      blank.append(heading, detail);
+      queue.append(blank);
+      return;
+    }
+    lists[selected].forEach(item => {
+      const article = document.createElement('article');
+      article.className = 'review-card';
+      const row = document.createElement('div');
+      row.className = 'review-meta';
+      const author = document.createElement('strong');
+      author.textContent = item.display_name;
+      const time = document.createElement('time');
+      time.dateTime = item.created_at;
+      time.textContent = new Date(item.created_at).toLocaleDateString(undefined, {year:'numeric',month:'short',day:'numeric'});
+      row.append(author, time);
+      const stars = document.createElement('div');
+      stars.className = 'review-stars';
+      stars.textContent = '★'.repeat(item.stars) + '☆'.repeat(5-item.stars);
+      stars.setAttribute('aria-label', `${item.stars} out of 5 stars`);
+      const body = document.createElement('p');
+      body.className = 'review-body';
+      body.textContent = item.body; // Treat all visitor text as text, not markup.
+      const actions = document.createElement('div');
+      actions.className = 'review-actions';
+      const choices = selected === 'pending' ? [['approved','Approve & publish'],['rejected','Decline']] : selected === 'approved' ? [['pending','Return to pending'],['rejected','Unpublish & decline']] : [['pending','Return to pending'],['approved','Approve & publish']];
+      choices.forEach(([state,label]) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = label;
+        if (state === 'approved') button.className = 'approve';
+        button.addEventListener('click', async () => {
+          if (state === 'rejected' && !confirm('Decline this review? It will not appear publicly.')) return;
+          $$('button', actions).forEach(el => el.disabled = true);
+          $('#dashboardStatus').textContent = 'Saving…';
+          try {
+            await api(`/api/admin/reviews/${item.id}`, {status:state});
+            $('#dashboardStatus').textContent = state === 'approved' ? 'Approved. This review is now public.' : state === 'rejected' ? 'Review declined.' : 'Review returned to pending.';
+            await refresh();
+          } catch (error) {
+            $('#dashboardStatus').textContent = error.message;
+            $$('button', actions).forEach(el => el.disabled = false);
+          }
+        });
+        actions.append(button);
+      });
+      article.append(row, stars, body, actions);
+      queue.append(article);
+    });
+  }
+  async function refresh() {
+    try {
+      const result = await Promise.all(['pending','approved','rejected'].map(status => api(`/api/admin/reviews?status=${status}`)));
+      ['pending','approved','rejected'].forEach((status,i) => { lists[status] = result[i].reviews; });
+      render();
+    } catch (error) {
+      $('#dashboardStatus').textContent = error.message;
+      if (error.message === 'Admin login required.') showDashboard(false);
+    }
+  }
+  $$('.tabs button').forEach(button => button.addEventListener('click', () => { selected = button.dataset.status; render(); }));
+  $('#loginForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    $('#loginStatus').textContent = 'Checking access…';
+    const passphrase = $('#passphrase').value;
+    try {
+      await api('/api/admin/login', {passphrase});
+      $('#passphrase').value = '';
+      $('#loginStatus').textContent = '';
+      showDashboard(true);
+      await refresh();
+    } catch (error) { $('#loginStatus').textContent = error.message; }
+  });
+  $('#logout').addEventListener('click', async () => {
+    try { await api('/api/admin/logout', {}); }
+    catch (error) { $('#dashboardStatus').textContent = error.message; return; }
+    lists = {pending:[], approved:[], rejected:[]};
+    showDashboard(false);
+  });
+  api('/api/admin/status').then(data => { showDashboard(data.authenticated); if (data.authenticated) refresh(); }).catch(() => { $('#loginStatus').textContent = 'Could not contact the server.'; });
+})();
+</script>
+</body>
+</html>

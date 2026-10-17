@@ -1,0 +1,8 @@
+# Never commit live feedback or signing/admin credentials.
+data/*
+!data/.gitkeep
+
+# Local checks and generated Python artifacts.
+.qc/
+__pycache__/
+*.pyc
